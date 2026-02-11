@@ -3,6 +3,9 @@ import cv2
 import os
 from ultralytics import YOLO
 
+# TODO: o algoritmo está considerando 180 como 0 e não penalizando a criança no momento em que rotaciona por completo, 
+# precisa ser corrigido
+
 # =========================
 # Parâmetros (ajuste aqui)
 # =========================
