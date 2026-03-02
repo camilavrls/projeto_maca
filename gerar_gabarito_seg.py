@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from ultralytics import YOLO
 
-SEG_MODEL_PATH = "best-seg.pt"       
+SEG_MODEL_PATH = "best-seg.pt"
 IMG_REF_PATH   = "correta.jpg"       # imagem referência correta para o gabarito
 OUT_NPZ_PATH   = "gabarito_seg.npz"  # arquivo de saída com gabarito
 
@@ -11,22 +11,40 @@ seg_model = YOLO(SEG_MODEL_PATH)
 
 
 def calcular_angulo_mascara(mask_bin: np.ndarray) -> float:
-    M = cv2.moments(mask_bin)
-    mu11 = M["mu11"]
-    mu20 = M["mu20"]
-    mu02 = M["mu02"]
+    """Retorna ângulo DIRECIONAL normalizado em [0,1], equivalente a [0,360) graus.
 
-    if (mu20 - mu02) == 0 and mu11 == 0:
-        angle_deg = 0.0
-    else:
-        angle = 0.5 * np.arctan2(2 * mu11, mu20 - mu02)  # radianos
-        angle_deg = np.degrees(angle)
+    Por que isso existe:
+      - Ângulo via momentos/PCA dá um *eixo* (0 e 180 viram a mesma coisa).
+      - Para penalizar rotação 180°, precisamos de direção.
 
-    angle_deg = (angle_deg + 180.0) % 180.0
+    Estratégia:
+      1) calcula o centróide da máscara
+      2) pega o ponto da máscara mais distante do centróide (âncora)
+      3) vetor centróide -> âncora define a direção
+      4) normaliza para [0,360) e divide por 360
 
-    # normaliza para [0,1]
-    angle_norm = angle_deg / 180.0
-    return angle_norm
+    Observação:
+      - Se a peça for extremamente simétrica, a âncora pode ficar instável.
+        Para puzzles irregulares, costuma funcionar muito bem.
+    """
+    ys, xs = np.where(mask_bin > 0)
+    if len(xs) < 10:
+        return 0.0
+
+    cx = float(xs.mean())
+    cy = float(ys.mean())
+
+    dx = xs - cx
+    dy = ys - cy
+    idx = int(np.argmax(dx * dx + dy * dy))
+
+    ax = float(xs[idx])
+    ay = float(ys[idx])
+
+    ang = np.degrees(np.arctan2((ay - cy), (ax - cx)))  # -180..180
+    ang = (ang + 360.0) % 360.0                         # 0..360
+
+    return float(ang / 360.0)
 
 
 def gerar_gabarito_seg(img_path: str):
@@ -77,9 +95,9 @@ def gerar_gabarito_seg(img_path: str):
         cy_n = (cy - y1_global) / height_global
 
         # matriz de probabilidades de ser fundo 0 ou peça 1
-        mask = masks[best_idx]           
+        mask = masks[best_idx]
         mask_bin = (mask > 0.5).astype("uint8")
-        angle_n = calcular_angulo_mascara(mask_bin)
+        angle_n = calcular_angulo_mascara(mask_bin)  # AGORA: 0–360 normalizado (divide por 360)
 
         centroids_ref_norm.append([cx_n, cy_n])
         classes_ref.append(c)
@@ -106,4 +124,4 @@ if __name__ == "__main__":
     print(f"Gabarito de segmentação salvo em: {OUT_NPZ_PATH}")
     print("Classes de referência:", classes_ref)
     print("Centróides normalizados de referência:\n", centroids_ref_norm)
-    print("Ângulos normalizados de referência (0–1, equivale a 0–180°):\n", angles_ref_norm)
+    print("Ângulos normalizados de referência (0–1, equivale a 0–360°):\n", angles_ref_norm)
