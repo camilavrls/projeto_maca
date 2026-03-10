@@ -22,6 +22,10 @@ W_FECH = 0.15
 seg_model = YOLO(SEG_MODEL_PATH)
 
 
+# Mapeamento de classe ID para nome
+class_names = seg_model.names  # {0: 'class_0', 1: 'class_1', ...}
+
+
 def _assert_pesos():
     s = W_POS + W_PROX + W_ROT + W_FECH
     if abs(s - 1.0) > 1e-6:
@@ -324,6 +328,7 @@ def avaliar_montagem_seg(img_path: str, salvar: bool = True) -> float:
     # Score 3) Rotação
     # --------------------
     rot_scores = []
+    rot_issues = []  # lista de peças com problema de rotação
     for i in range(K):
         if not present[i]:
             rot_scores.append(0.0)
@@ -332,6 +337,10 @@ def avaliar_montagem_seg(img_path: str, salvar: bool = True) -> float:
         d = _diff_ang_deg(angles_pred_deg[i], angles_ref_deg[i])  # ✅ agora 360-circular
         s = max(0.0, 1.0 - (d / max(TOL_ROT_DEG, 1e-6)))
         rot_scores.append(s)
+        
+        # rastreia peças com problema
+        if d > TOL_ROT_DEG:
+            rot_issues.append((i, int(classes_ref[i]), float(d), float(angles_pred_deg[i]), float(angles_ref_deg[i])))
 
     score_rot = float(np.mean(rot_scores)) if len(rot_scores) else 0.0
 
@@ -391,11 +400,16 @@ def avaliar_montagem_seg(img_path: str, salvar: bool = True) -> float:
     # Relatório/Debug
     # --------------------
     print(f"\n[{os.path.basename(img_path)}] ===== BREAKDOWN =====")
-    print(f"  Posição:      {score_pos*100:.2f}%")
-    print(f"  Proximidade:  {score_prox*100:.2f}%  (arestas {len(edges)})")
-    print(f"  Rotação:      {score_rot*100:.2f}%   (tol {TOL_ROT_DEG:.1f}°)")
-    print(f"  Fechamento:   {score_fech*100:.2f}%")
-    print(f"  FINAL:        {score_final*100:.2f}%")
+    print(f"  Posição:      {score_pos*10:.1f}")
+    print(f"  Proximidade:  {score_prox*10:.1f}  (arestas {len(edges)})")
+    print(f"  Rotação:      {score_rot*10:.1f}   (tol {TOL_ROT_DEG:.1f}°)")
+    if rot_issues:
+        print(f"    Peças com problema de rotação:")
+        for idx, class_id, diff, ang_pred, ang_ref in rot_issues:
+            class_name = class_names.get(class_id, f"class_{class_id}")
+            print(f"      • {class_name}")
+    print(f"  Fechamento:   {score_fech*10:.1f}")
+    print(f"  FINAL:        {score_final*10:.1f}")
     print(f"  Peças presentes: {int(present.sum())}/{K}")
 
     # --------------------
@@ -414,7 +428,7 @@ def avaliar_montagem_seg(img_path: str, salvar: bool = True) -> float:
             cy = y1g + centroids_pred_norm[i, 1] * hg
             desenhar_ponto(out_vis, cx, cy, (0, 255, 0), radius=7)
 
-        desenhar_texto(out_vis, f"FINAL: {score_final*100:.1f}%", pos=(20, 40))
+        desenhar_texto(out_vis, f"FINAL: {score_final*10:.1f}", pos=(20, 40))
 
         out_img = os.path.join(OUT_DIR, os.path.basename(img_path))
         cv2.imwrite(out_img, out_vis)
@@ -424,6 +438,7 @@ def avaliar_montagem_seg(img_path: str, salvar: bool = True) -> float:
 
 if __name__ == "__main__":
     # Exemplos
-    avaliar_montagem_seg("correta.jpg", salvar=True)
-    avaliar_montagem_seg("incorreta.jpg", salvar=True)
-    avaliar_montagem_seg("incorreta2.jpg", salvar=True)
+    # avaliar_montagem_seg("correta.jpg", salvar=True)
+    # avaliar_montagem_seg("incorreta.jpg", salvar=True)
+    # avaliar_montagem_seg("incorreta2.jpg", salvar=True)
+    avaliar_montagem_seg("3anoos.jpeg", salvar=True)
