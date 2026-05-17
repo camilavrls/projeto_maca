@@ -1,8 +1,3 @@
-"""
-Gera um gabarito de referência com as posições e ângulos
-das peças em uma montagem CORRETA.
-"""
-
 import numpy as np
 import cv2
 from ultralytics import YOLO
@@ -96,10 +91,186 @@ def calcular_angulo_orientacao(masks, centroides_abs) -> np.ndarray:
     
     return np.array(angulos)
 
-if __name__ == "__main__":
-    resultado = processar_imagem("correta.jpg")
+def calcular_relacoes_pares(centroides_norm, classes) -> dict:
 
-    print(resultado["classes"])
-    print(resultado["boxes"])
-    print(resultado["confiancas"])
-    print(resultado["masks"])
+    indice_classes = {classe: i for i, classe in enumerate(classes)}
+
+    idx_esquerda = indice_classes.get("Esquerda")
+    idx_direita_cima = indice_classes.get("Direita_cima")
+    idx_direita_baixo = indice_classes.get("Direita_baixo")
+    
+    if None in [idx_esquerda, idx_direita_cima, idx_direita_baixo]:
+        raise ValueError("Nem todas as peças foram detectadas!")
+    
+    relacoes = {}
+    
+    # PAR 1: Esquerda ↔ Direita_cima
+    cx_esq = centroides_norm[idx_esquerda, 0]
+    cy_esq = centroides_norm[idx_esquerda, 1]
+    cx_cima = centroides_norm[idx_direita_cima, 0]
+    cy_cima = centroides_norm[idx_direita_cima, 1]
+    
+    dx_esq_cima = cx_cima - cx_esq
+    dy_esq_cima = cy_cima - cy_esq
+    
+    dist_esq_cima = np.sqrt(dx_esq_cima**2 + dy_esq_cima**2)
+    
+    ang_rad_esq_cima = np.arctan2(dy_esq_cima, dx_esq_cima)
+    ang_deg_esq_cima = np.degrees(ang_rad_esq_cima)
+    if ang_deg_esq_cima < 0:
+        ang_deg_esq_cima += 360
+    
+    relacoes["esquerda_cima"] = {
+        "distancia": float(dist_esq_cima),
+        "angulo": float(ang_deg_esq_cima)
+    }
+    
+    # PAR 2: Esquerda ↔ Direita_baixo 
+    cx_baixo = centroides_norm[idx_direita_baixo, 0]
+    cy_baixo = centroides_norm[idx_direita_baixo, 1]
+    
+    dx_esq_baixo = cx_baixo - cx_esq
+    dy_esq_baixo = cy_baixo - cy_esq
+    
+    dist_esq_baixo = np.sqrt(dx_esq_baixo**2 + dy_esq_baixo**2)
+    
+    ang_rad_esq_baixo = np.arctan2(dy_esq_baixo, dx_esq_baixo)
+    ang_deg_esq_baixo = np.degrees(ang_rad_esq_baixo)
+    if ang_deg_esq_baixo < 0:
+        ang_deg_esq_baixo += 360
+    
+    relacoes["esquerda_baixo"] = {
+        "distancia": float(dist_esq_baixo),
+        "angulo": float(ang_deg_esq_baixo)
+    }
+    
+    # PAR 3: Direita_cima ↔ Direita_baixo 
+    dx_cima_baixo = cx_baixo - cx_cima
+    dy_cima_baixo = cy_baixo - cy_cima
+    
+    dist_cima_baixo = np.sqrt(dx_cima_baixo**2 + dy_cima_baixo**2)
+    
+    ang_rad_cima_baixo = np.arctan2(dy_cima_baixo, dx_cima_baixo)
+    ang_deg_cima_baixo = np.degrees(ang_rad_cima_baixo)
+    if ang_deg_cima_baixo < 0:
+        ang_deg_cima_baixo += 360
+    
+    relacoes["cima_baixo"] = {
+        "distancia": float(dist_cima_baixo),
+        "angulo": float(ang_deg_cima_baixo)
+    }
+    
+    return relacoes
+
+def salvar_gabarito(centroides_norm, angulos_abs, relacoes_pares, classes, npz_path: str) -> None:
+
+    pares_esq_cima_dist = relacoes_pares["esquerda_cima"]["distancia"]
+    pares_esq_cima_ang = relacoes_pares["esquerda_cima"]["angulo"]
+    
+    pares_esq_baixo_dist = relacoes_pares["esquerda_baixo"]["distancia"]
+    pares_esq_baixo_ang = relacoes_pares["esquerda_baixo"]["angulo"]
+    
+    pares_cima_baixo_dist = relacoes_pares["cima_baixo"]["distancia"]
+    pares_cima_baixo_ang = relacoes_pares["cima_baixo"]["angulo"]
+    
+    np.savez_compressed(
+        npz_path,
+        classes=classes,
+        centroides_norm=centroides_norm,
+        angulos_abs=angulos_abs,
+        pares_esq_cima_dist=pares_esq_cima_dist,
+        pares_esq_cima_ang=pares_esq_cima_ang,
+        pares_esq_baixo_dist=pares_esq_baixo_dist,
+        pares_esq_baixo_ang=pares_esq_baixo_ang,
+        pares_cima_baixo_dist=pares_cima_baixo_dist,
+        pares_cima_baixo_ang=pares_cima_baixo_ang
+    )
+    
+    print(f"Gabarito salvo em: {npz_path}")
+
+def carregar_gabarito(npz_path: str) -> dict:
+    dados = np.load(npz_path, allow_pickle=True)
+    
+    relacoes_pares = {
+        "esquerda_cima": {
+            "distancia": float(dados["pares_esq_cima_dist"]),
+            "angulo": float(dados["pares_esq_cima_ang"])
+        },
+        "esquerda_baixo": {
+            "distancia": float(dados["pares_esq_baixo_dist"]),
+            "angulo": float(dados["pares_esq_baixo_ang"])
+        },
+        "cima_baixo": {
+            "distancia": float(dados["pares_cima_baixo_dist"]),
+            "angulo": float(dados["pares_cima_baixo_ang"])
+        }
+    }
+
+    return {
+        "classes": list(dados["classes"]),
+        "centroides_norm": dados["centroides_norm"],
+        "angulos_abs": dados["angulos_abs"],
+        "relacoes_pares": relacoes_pares
+    }
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("GERANDO GABARITO DE SEGMENTAÇÃO")
+    print("=" * 60)
+    
+    # Processar imagem
+    print("\n=== ETAPA 1: SEGMENTAÇÃO 🎯 ===")
+    resultado = processar_imagem("correta.jpg")
+    print(f"Classes detectadas: {resultado['classes']}")
+    print(f"Confiança: {resultado['confiancas']}")
+    
+    # Etapa 2A: Centróides normalizados
+    print("\n=== ETAPA 2A: CENTRÓIDES NORMALIZADOS ===")
+    centroides_abs, centroides_norm = calcular_centroide_normalizado(
+        resultado["masks"],
+        resultado["boxes"]
+    )
+    print("Centróides Normalizados:")
+    for i, classe in enumerate(resultado["classes"]):
+        print(f"  {classe}: ({centroides_norm[i, 0]:.4f}, {centroides_norm[i, 1]:.4f})")
+    
+    # Etapa 2B: Ângulos de orientação
+    print("\n=== ETAPA 2B: ÂNGULOS DE ORIENTAÇÃO 📐 ===")
+    angulos = calcular_angulo_orientacao(resultado["masks"], centroides_abs)
+    print("Ângulos de Orientação (0-360°):")
+    for i, classe in enumerate(resultado["classes"]):
+        print(f"  {classe}: {angulos[i]:.2f}°")
+    
+    # Etapa 3: Relações entre pares
+    print("\n=== ETAPA 3: RELAÇÕES ENTRE PARES 🔗 ===")
+    relacoes = calcular_relacoes_pares(centroides_norm, resultado["classes"])
+    print("Relações entre Pares:")
+    for par, dados in relacoes.items():
+        print(f"  {par}:")
+        print(f"    - Distância: {dados['distancia']:.4f}")
+        print(f"    - Ângulo Relativo: {dados['angulo']:.2f}°")
+    
+    # Etapa 4: Salvar gabarito
+    print("\n=== ETAPA 4: PERSISTÊNCIA 💾 ===")
+    salvar_gabarito(
+        centroides_norm,
+        angulos,
+        relacoes,
+        resultado["classes"],
+        GABARITO_NPZ
+    )
+    
+    # Verificação: Carregar gabarito
+    print("\n=== VERIFICAÇÃO: Carregando Gabarito ===")
+    gabarito = carregar_gabarito(GABARITO_NPZ)
+    print("✅ Gabarito carregado com sucesso!")
+    print(f"Classes: {gabarito['classes']}")
+    print(f"Centróides normalizados:\n{gabarito['centroides_norm']}")
+    print(f"Ângulos absolutos:\n{gabarito['angulos_abs']}")
+    print(f"Relações entre pares:")
+    for par, dados in gabarito['relacoes_pares'].items():
+        print(f"  {par}: dist={dados['distancia']:.4f}, ang={dados['angulo']:.2f}°")
+    
+    print("\n" + "=" * 60)
+    print("✅ GABARITO GERADO COM SUCESSO!")
+    print("=" * 60)
