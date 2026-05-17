@@ -3,12 +3,6 @@ import cv2
 import os
 from ultralytics import YOLO
 
-# TODO: o algoritmo está considerando 180 como 0 e não penalizando a criança no momento em que rotaciona por completo, 
-# precisa ser corrigido
-
-# =========================
-# Parâmetros (ajuste aqui)
-# =========================
 SEG_MODEL_PATH = "best-seg.pt"
 GABARITO_NPZ = "gabarito_seg.npz"
 OUT_DIR = "avaliacoes_seg"
@@ -24,9 +18,12 @@ W_PROX = 0.25
 W_ROT = 0.25
 W_FECH = 0.15
 
-# =========================
 
 seg_model = YOLO(SEG_MODEL_PATH)
+
+
+# Mapeamento de classe ID para nome
+class_names = seg_model.names  # {0: 'class_0', 1: 'class_1', ...}
 
 
 def _assert_pesos():
@@ -45,31 +42,46 @@ def desenhar_texto(img, texto, pos=(20, 40)):
 
 
 def _norm_angle_deg(angle_deg: float) -> float:
-    # normaliza para [0,180)
-    return float((angle_deg + 180.0) % 180.0)
+    """Normaliza ângulo para [0,360)."""
+    return float((angle_deg + 360.0) % 360.0)
 
 
 def calcular_angulo_mascara(mask_bin: np.ndarray) -> float:
-    """Retorna ângulo em graus [0, 180)."""
-    M = cv2.moments(mask_bin)
-    mu11 = M.get("mu11", 0.0)
-    mu20 = M.get("mu20", 0.0)
-    mu02 = M.get("mu02", 0.0)
+    """Retorna ângulo DIRECIONAL em graus [0,360).
 
-    if (mu20 - mu02) == 0 and mu11 == 0:
-        angle_deg = 0.0
-    else:
-        angle = 0.5 * np.arctan2(2 * mu11, mu20 - mu02)
-        angle_deg = np.degrees(angle)
+    Motivo:
+      - Ângulo via momentos/PCA dá um *eixo* (0 e 180 são equivalentes).
+      - Para penalizar rotação de 180°, precisamos de direção.
 
-    return _norm_angle_deg(angle_deg)
+    Estratégia:
+      - centróide da máscara
+      - ponto mais distante do centróide como âncora
+      - ângulo do vetor centróide -> âncora
+    """
+    ys, xs = np.where(mask_bin > 0)
+    if len(xs) < 10:
+        return 0.0
+
+    cx = float(xs.mean())
+    cy = float(ys.mean())
+
+    dx = xs - cx
+    dy = ys - cy
+    idx = int(np.argmax(dx * dx + dy * dy))
+
+    ax = float(xs[idx])
+    ay = float(ys[idx])
+
+    ang = np.degrees(np.arctan2((ay - cy), (ax - cx)))
+    return _norm_angle_deg(ang)
 
 
 def calcular_angulo_keypoints(kps_xy: np.ndarray) -> float:
-    """Retorna ângulo em graus [0,180) a partir de keypoints (preferência).
+    """Retorna ângulo DIRECIONAL em graus [0,360) a partir de keypoints.
 
-    Estratégia simples:
-      - pega os 2 primeiros keypoints válidos (x,y) e calcula o vetor entre eles.
+    Observação:
+      - Se você usar keypoints, a direção já existe (vetor entre 2 pontos).
+      - Ainda assim, normalizamos em [0,360) para compatibilidade.
     """
     if kps_xy is None:
         return 0.0
@@ -101,9 +113,9 @@ def carregar_gabarito(npz_path: str):
 
     if "angles" in data.files:
         angles_ref = data["angles"]  # pode estar em graus ou normalizado dependendo do gerador do gabarito
-        # Heurística: se estiver em [0,1], converte para graus (0–180)
+        # Heurística: se estiver em [0,1], converte para graus (0–360)
         if np.nanmax(angles_ref) <= 1.0 + 1e-6:
-            angles_ref_deg = angles_ref.astype(float) * 180.0
+            angles_ref_deg = angles_ref.astype(float) * 360.0
         else:
             angles_ref_deg = angles_ref.astype(float)
     else:
@@ -199,14 +211,14 @@ def _extrair_deteccoes(img: np.ndarray):
             cy_n = float((cy - y1_global) / height_global)
 
             # ângulo: preferir keypoints, senão máscara
-            ang_deg = 0.0
+            ang_deg = None
             if kps is not None:
                 try:
                     ang_deg = calcular_angulo_keypoints(kps[i])
                 except Exception:
-                    ang_deg = 0.0
+                    ang_deg = None
 
-            if ang_deg == 0.0:
+            if ang_deg is None:
                 mask = masks[i]
                 mask_bin = (mask > 0.5).astype("uint8")
                 ang_deg = calcular_angulo_mascara(mask_bin)
@@ -225,9 +237,13 @@ def _extrair_deteccoes(img: np.ndarray):
 
 
 def _diff_ang_deg(a: float, b: float) -> float:
-    """Diferença angular em graus em [0, 90] por simetria em 180."""
-    d = abs(float(a) - float(b)) % 180.0
-    d = min(d, 180.0 - d)
+    """Diferença angular DIRECIONAL em graus (circular) em [0,180].
+
+    - Usa 360° como período (agora 0 e 180 NÃO são equivalentes).
+    - Retorna o menor arco entre os dois ângulos.
+    """
+    d = abs(float(a) - float(b)) % 360.0
+    d = min(d, 360.0 - d)
     return float(d)
 
 
@@ -249,168 +265,180 @@ def avaliar_montagem_seg(img_path: str, salvar: bool = True) -> float:
         nota = 0.0
         if salvar:
             os.makedirs(OUT_DIR, exist_ok=True)
-            out_path = os.path.join(OUT_DIR, os.path.basename(img_path).replace(".jpg", "_seg_avaliada.jpg"))
-            desenhar_texto(img_plot, f"Nota: {nota}%")
-            cv2.imwrite(out_path, img_plot)
+            out_img = os.path.join(OUT_DIR, os.path.basename(img_path))
+            cv2.imwrite(out_img, img)
         return nota
 
-    x1_global, y1_global, width_global, height_global = bbox
+    x1g, y1g, wg, hg = bbox
 
-    # -------------------------
-    # 1) POSIÇÃO (0/1, sem tolerância)
-    # -------------------------
-    # Para cada peça detectada, achamos "slot" pela referência mais próxima.
-    # Acertou se o slot for o slot correto (idx_ref).
-    pos_ok = 0
-    presentes = 0
+    # index do gabarito por classe -> idx ref
+    idx_ref_by_class = {int(classes_ref[i]): i for i in range(K)}
 
-    det_centroids_norm_por_ref = [None] * K
-    det_centroids_global_por_ref = [None] * K
-    det_angles_por_ref = [None] * K
+    # centroids previstos alinhados com ref (K,2), e flags presentes
+    centroids_pred_norm = np.zeros((K, 2), dtype=float)
+    angles_pred_deg = np.zeros((K,), dtype=float)
+    present = np.zeros((K,), dtype=bool)
 
-    for idx_ref, c_ref in enumerate(classes_ref):
-        c_ref_int = int(c_ref)
-        if c_ref_int not in det_por_classe:
+    for c, d in det_por_classe.items():
+        if c in idx_ref_by_class:
+            i = idx_ref_by_class[c]
+            centroids_pred_norm[i, 0] = d["cx_n"]
+            centroids_pred_norm[i, 1] = d["cy_n"]
+            angles_pred_deg[i] = d["ang_deg"]
+            present[i] = True
+
+    # --------------------
+    # Score 1) Posição
+    # --------------------
+    pos_scores = []
+    for i in range(K):
+        if not present[i]:
+            pos_scores.append(0.0)
             continue
-        presentes += 1
-        d = det_por_classe[c_ref_int]
-        det_centroids_norm_por_ref[idx_ref] = np.array([d["cx_n"], d["cy_n"]], dtype=float)
-        det_centroids_global_por_ref[idx_ref] = (d["cx"], d["cy"])
-        det_angles_por_ref[idx_ref] = float(d["ang_deg"])
+        dist = float(np.linalg.norm(centroids_pred_norm[i] - centroids_ref_norm[i]))
+        s = max(0.0, 1.0 - (dist / max(TOL_PROX, 1e-6)))  # reaproveita escala de tolerância semelhante
+        pos_scores.append(s)
 
-        # slot pelo centróide mais próximo no gabarito
-        dist_all = np.linalg.norm(centroids_ref_norm - det_centroids_norm_por_ref[idx_ref], axis=1)
-        slot_pred = int(np.argmin(dist_all))
-        if slot_pred == idx_ref:
-            pos_ok += 1
+    score_pos = float(np.mean(pos_scores)) if len(pos_scores) else 0.0
 
-    s_pos = (pos_ok / K) if K > 0 else 0.0
+    # --------------------
+    # Score 2) Proximidade (arestas kNN)
+    # --------------------
+    edges, ref_d, max_ref = _build_edges_knn(centroids_ref_norm, k=3)
 
-    # -------------------------
-    # Arestas (vizinhança) a partir do gabarito
-    # -------------------------
-    edges, ref_dist, max_ref_edge = _build_edges_knn(centroids_ref_norm, k=3)
-
-    # -------------------------
-    # 2) PROXIMIDADE (com tolerância)
-    # -------------------------
-    # Compara distâncias entre peças vizinhas (edges) com o gabarito.
-    prox_penalties = []
+    prox_scores = []
     for (i, j) in edges:
-        ref_d = ref_dist[(i, j)]
-        pi = det_centroids_norm_por_ref[i]
-        pj = det_centroids_norm_por_ref[j]
-        if pi is None or pj is None:
-            # ausência de peça -> penaliza
-            prox_penalties.append(1.0)
-            continue
-        det_d = float(np.linalg.norm(pi - pj))
-        diff = abs(det_d - ref_d)
-        if diff <= TOL_PROX:
-            prox_penalties.append(0.0)
-        else:
-            # penaliza o excedente, normalizado
-            prox_penalties.append(min((diff - TOL_PROX) / max_ref_edge, 1.0))
-
-    s_prox = 1.0 - (float(np.mean(prox_penalties)) if len(prox_penalties) else 0.0)
-    s_prox = float(np.clip(s_prox, 0.0, 1.0))
-
-    # -------------------------
-    # 3) ROTAÇÃO (com tolerância)
-    # -------------------------
-    rot_penalties = []
-    for idx_ref in range(K):
-        ang_ref = float(angles_ref_deg[idx_ref])
-        ang_det = det_angles_por_ref[idx_ref]
-        if ang_det is None:
-            rot_penalties.append(1.0)
+        if not (present[i] and present[j]):
+            prox_scores.append(0.0)
             continue
 
-        diff = _diff_ang_deg(ang_det, ang_ref)
-        if diff <= TOL_ROT_DEG:
-            rot_penalties.append(0.0)
-        else:
-            rot_penalties.append(min((diff - TOL_ROT_DEG) / (180.0 - TOL_ROT_DEG), 1.0))
+        d_pred = float(np.linalg.norm(centroids_pred_norm[i] - centroids_pred_norm[j]))
+        d_ref = float(ref_d[(i, j)])
 
-    s_rot = 1.0 - (float(np.mean(rot_penalties)) if len(rot_penalties) else 0.0)
-    s_rot = float(np.clip(s_rot, 0.0, 1.0))
+        # erro relativo em relação ao maior ref (normalização)
+        err = abs(d_pred - d_ref)
 
-    # -------------------------
-    # 4) FECHAMENTO (com tolerância)
-    # -------------------------
-    # Mede "desalinhamento/gap" como variação do vetor relativo entre vizinhos.
-    # (dx,dy) detectado vs (dx,dy) referência.
-    fech_penalties = []
-    for (i, j) in edges:
-        pi = det_centroids_norm_por_ref[i]
-        pj = det_centroids_norm_por_ref[j]
-        if pi is None or pj is None:
-            fech_penalties.append(1.0)
+        # penalização com tolerância
+        s = max(0.0, 1.0 - (err / max(TOL_PROX, 1e-6)))
+        prox_scores.append(s)
+
+    score_prox = float(np.mean(prox_scores)) if len(prox_scores) else 0.0
+
+    # --------------------
+    # Score 3) Rotação
+    # --------------------
+    rot_scores = []
+    rot_issues = []  # lista de peças com problema de rotação
+    for i in range(K):
+        if not present[i]:
+            rot_scores.append(0.0)
             continue
 
-        ref_vec = centroids_ref_norm[j] - centroids_ref_norm[i]
-        det_vec = pj - pi
-        diff_vec = float(np.linalg.norm(det_vec - ref_vec))
+        d = _diff_ang_deg(angles_pred_deg[i], angles_ref_deg[i])  # ✅ agora 360-circular
+        s = max(0.0, 1.0 - (d / max(TOL_ROT_DEG, 1e-6)))
+        rot_scores.append(s)
+        
+        # rastreia peças com problema
+        if d > TOL_ROT_DEG:
+            rot_issues.append((i, int(classes_ref[i]), float(d), float(angles_pred_deg[i]), float(angles_ref_deg[i])))
 
-        if diff_vec <= TOL_FECH:
-            fech_penalties.append(0.0)
-        else:
-            fech_penalties.append(min((diff_vec - TOL_FECH) / max_ref_edge, 1.0))
+    score_rot = float(np.mean(rot_scores)) if len(rot_scores) else 0.0
 
-    s_fech = 1.0 - (float(np.mean(fech_penalties)) if len(fech_penalties) else 0.0)
-    s_fech = float(np.clip(s_fech, 0.0, 1.0))
+    # --------------------
+    # Score 4) Fechamento
+    # --------------------
+    # fechamento: compara "perímetro" (ciclo) aproximando por ordenar por ângulo polar ao redor do centro
+    # (mantém seu espírito: consistência global)
+    fech_scores = []
+    present_idxs = [i for i in range(K) if present[i]]
+    if len(present_idxs) >= 3:
+        # centro médio
+        c0 = centroids_pred_norm[present_idxs].mean(axis=0)
 
-    # -------------------------
-    # Combinar e imprimir breakdown
-    # -------------------------
-    nota = round((W_POS * s_pos + W_PROX * s_prox + W_ROT * s_rot + W_FECH * s_fech) * 100.0, 2)
+        # ângulo polar para ordenar
+        angs = []
+        for i in present_idxs:
+            v = centroids_pred_norm[i] - c0
+            ang = np.degrees(np.arctan2(v[1], v[0]))
+            angs.append((ang, i))
+        angs.sort(key=lambda x: x[0])
+        order = [i for _, i in angs]
 
-    print(f"\n[{img_path}] ===== BREAKDOWN =====")
-    print(f"  Posição:      {s_pos*100:.2f}%  (acertos {pos_ok}/{K})")
-    print(f"  Proximidade:  {s_prox*100:.2f}%  (arestas {len(edges)})")
-    print(f"  Rotação:      {s_rot*100:.2f}%")
-    print(f"  Fechamento:   {s_fech*100:.2f}%")
-    print(f"  FINAL:        {nota:.2f}%")
-    print(f"  Peças presentes: {presentes}/{K}\n")
+        # soma de distâncias em ciclo (pred) e ref
+        def cycle_len(points):
+            L = 0.0
+            for a in range(len(points)):
+                i = points[a]
+                j = points[(a + 1) % len(points)]
+                L += float(np.linalg.norm(points[i] - points[j]))
+            return L
 
-    # Visualização: centróides detectados (vermelho) e slots (azul)
-    for idx_ref in range(K):
-        # referência (azul)
-        cxr = centroids_ref_norm[idx_ref][0] * width_global + x1_global
-        cyr = centroids_ref_norm[idx_ref][1] * height_global + y1_global
-        desenhar_ponto(img_plot, cxr, cyr, (255, 0, 0))
+        # cria arrays indexáveis por idx (K,2)
+        pred_pts = centroids_pred_norm
+        ref_pts = centroids_ref_norm
 
-        # detectado (vermelho)
-        if det_centroids_global_por_ref[idx_ref] is not None:
-            cx, cy = det_centroids_global_por_ref[idx_ref]
-            desenhar_ponto(img_plot, cx, cy, (0, 0, 255))
+        # comprimento apenas nos mesmos índices presentes (ordem do pred, aplicada no ref também)
+        L_pred = 0.0
+        L_ref = 0.0
+        for a in range(len(order)):
+            i = order[a]
+            j = order[(a + 1) % len(order)]
+            L_pred += float(np.linalg.norm(pred_pts[i] - pred_pts[j]))
+            L_ref += float(np.linalg.norm(ref_pts[i] - ref_pts[j]))
 
-    desenhar_texto(img_plot, f"Nota: {nota}%")
+        err = abs(L_pred - L_ref)
+        score_fech = max(0.0, 1.0 - (err / max(TOL_FECH, 1e-6)))
+    else:
+        score_fech = 0.0
 
+    # --------------------
+    # Final
+    # --------------------
+    score_final = (W_POS * score_pos) + (W_PROX * score_prox) + (W_ROT * score_rot) + (W_FECH * score_fech)
+
+    # --------------------
+    # Relatório/Debug
+    # --------------------
+    print(f"\n[{os.path.basename(img_path)}] ===== BREAKDOWN =====")
+    print(f"  Posição:      {score_pos*10:.1f}")
+    print(f"  Proximidade:  {score_prox*10:.1f}  (arestas {len(edges)})")
+    print(f"  Rotação:      {score_rot*10:.1f}   (tol {TOL_ROT_DEG:.1f}°)")
+    if rot_issues:
+        print(f"    Peças com problema de rotação:")
+        for idx, class_id, diff, ang_pred, ang_ref in rot_issues:
+            class_name = class_names.get(class_id, f"class_{class_id}")
+            print(f"      • {class_name}")
+    print(f"  Fechamento:   {score_fech*10:.1f}")
+    print(f"  FINAL:        {score_final*10:.1f}")
+    print(f"  Peças presentes: {int(present.sum())}/{K}")
+
+    # --------------------
+    # Salvar artefatos
+    # --------------------
     if salvar:
         os.makedirs(OUT_DIR, exist_ok=True)
-        out_path = os.path.join(OUT_DIR, os.path.basename(img_path).replace(".jpg", "_seg_avaliada.jpg"))
-        cv2.imwrite(out_path, img_plot)
-        print(f"[OK] Imagem avaliada salva em: {out_path}")
 
-    return nota
+        # desenha centróides previstos e texto de score
+        out_vis = img_plot.copy()
+
+        for i in range(K):
+            if not present[i]:
+                continue
+            cx = x1g + centroids_pred_norm[i, 0] * wg
+            cy = y1g + centroids_pred_norm[i, 1] * hg
+            desenhar_ponto(out_vis, cx, cy, (0, 255, 0), radius=7)
+
+        desenhar_texto(out_vis, f"FINAL: {score_final*10:.1f}", pos=(20, 40))
+
+        out_img = os.path.join(OUT_DIR, os.path.basename(img_path))
+        cv2.imwrite(out_img, out_vis)
+
+    return float(score_final)
 
 
 if __name__ == "__main__":
-    # Exemplos (ajuste nomes/paths conforme seu dataset)
-    img_correta = "correta.jpg"
-    img_incorreta = "incorreta.jpg"
-    img_incorreta2 = "incorreta2.jpg"  # opcional
-
-    nota_c = avaliar_montagem_seg(img_correta)
-    nota_i = avaliar_montagem_seg(img_incorreta)
-    try:
-        nota_i2 = avaliar_montagem_seg(img_incorreta2)
-    except FileNotFoundError:
-        nota_i2 = None
-
-    print("\n===== RESULTADOS FINAIS =====")
-    print(f"Correta:   {nota_c}")
-    print(f"Incorreta: {nota_i}")
-    if nota_i2 is not None:
-        print(f"Incorreta2: {nota_i2}")
+    # Exemplos
+    # avaliar_montagem_seg("correta.jpg", salvar=True)
+    # avaliar_montagem_seg("incorreta.jpg", salvar=True)
+    # avaliar_montagem_seg("incorreta2.jpg", salvar=True)
+    avaliar_montagem_seg("3anoos.jpeg", salvar=True)
