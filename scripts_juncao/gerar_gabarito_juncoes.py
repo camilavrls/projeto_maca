@@ -16,7 +16,7 @@ def processar_imagem(img_path: str) -> dict:
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    resultado = seg_model(img_rgb)[0]
+    resultado = seg_model(img_rgb, conf=0.10)[0]
 
     boxes = resultado.boxes.xyxy.cpu().numpy()
     masks = resultado.masks.data.cpu().numpy()
@@ -35,7 +35,7 @@ def processar_imagem(img_path: str) -> dict:
         "confiancas": confiancas
     }
 
-def calcular_centroide_normalizado(masks, boxes) -> tuple:
+def calcular_centroide_normalizado(masks, boxes, imagem_shape) -> tuple:
     x_min = np.min(boxes[:, 0])
     y_min = np.min(boxes[:, 1])
     x_max = np.max(boxes[:, 2])
@@ -43,12 +43,19 @@ def calcular_centroide_normalizado(masks, boxes) -> tuple:
     
     largura_total = x_max - x_min
     altura_total = y_max - y_min
+    altura_img, largura_img = imagem_shape[:2]
+    altura_mask, largura_mask = masks.shape[1:3]
+    escala_x = largura_img / largura_mask
+    escala_y = altura_img / altura_mask
     
     centroides_abs = []
     centroides_normalizados = []
     
     for i, mascara in enumerate(masks):
         y_pixels, x_pixels = np.where(mascara == 1)
+
+        x_pixels = x_pixels * escala_x
+        y_pixels = y_pixels * escala_y
         
         cx_abs = np.mean(x_pixels)
         cy_abs = np.mean(y_pixels)
@@ -62,30 +69,29 @@ def calcular_centroide_normalizado(masks, boxes) -> tuple:
 
     return np.array(centroides_abs), np.array(centroides_normalizados)
 
-def calcular_angulo_orientacao(masks, centroides_abs) -> np.ndarray:
+def calcular_angulo_orientacao(masks, centroides_abs, imagem_shape) -> np.ndarray:
     angulos = []
+    altura_img, largura_img = imagem_shape[:2]
+    altura_mask, largura_mask = masks.shape[1:3]
+    escala_x = largura_img / largura_mask
+    escala_y = altura_img / altura_mask
     
     for i, mascara in enumerate(masks):
         
         y_pixels, x_pixels = np.where(mascara == 1)
+
+        x_pixels = x_pixels * escala_x
+        y_pixels = y_pixels * escala_y
         
-        cx_abs = centroides_abs[i, 0]
-        cy_abs = centroides_abs[i, 1]
-        
-        distancias = np.sqrt((x_pixels - cx_abs)**2 + (y_pixels - cy_abs)**2)
-        idx_mais_distante = np.argmax(distancias)
-        
-        x_dist = x_pixels[idx_mais_distante]
-        y_dist = y_pixels[idx_mais_distante]
-        
-        dx = x_dist - cx_abs
-        dy = y_dist - cy_abs
-        
-        angulo_rad = np.arctan2(dy, dx)
-        angulo_deg = np.degrees(angulo_rad)
-        
+        pontos = np.column_stack([x_pixels, y_pixels])
+        pontos_centralizados = pontos - pontos.mean(axis=0)
+        matriz_cov = np.cov(pontos_centralizados.T)
+        valores, vetores = np.linalg.eigh(matriz_cov)
+        vetor_principal = vetores[:, np.argmax(valores)]
+
+        angulo_deg = np.degrees(np.arctan2(vetor_principal[1], vetor_principal[0]))
         if angulo_deg < 0:
-            angulo_deg += 360
+            angulo_deg += 180
         
         angulos.append(angulo_deg)
     
@@ -218,30 +224,31 @@ if __name__ == "__main__":
     print("GERANDO GABARITO DE SEGMENTAÇÃO")
     print("=" * 60)
     
-    # Processar imagem
     print("\n=== ETAPA 1: SEGMENTAÇÃO 🎯 ===")
     resultado = processar_imagem("correta.jpg")
     print(f"Classes detectadas: {resultado['classes']}")
     print(f"Confiança: {resultado['confiancas']}")
     
-    # Etapa 2A: Centróides normalizados
     print("\n=== ETAPA 2A: CENTRÓIDES NORMALIZADOS ===")
     centroides_abs, centroides_norm = calcular_centroide_normalizado(
         resultado["masks"],
-        resultado["boxes"]
+        resultado["boxes"],
+        resultado["imagem"].shape
     )
     print("Centróides Normalizados:")
     for i, classe in enumerate(resultado["classes"]):
         print(f"  {classe}: ({centroides_norm[i, 0]:.4f}, {centroides_norm[i, 1]:.4f})")
     
-    # Etapa 2B: Ângulos de orientação
     print("\n=== ETAPA 2B: ÂNGULOS DE ORIENTAÇÃO 📐 ===")
-    angulos = calcular_angulo_orientacao(resultado["masks"], centroides_abs)
+    angulos = calcular_angulo_orientacao(
+        resultado["masks"],
+        centroides_abs,
+        resultado["imagem"].shape
+    )
     print("Ângulos de Orientação (0-360°):")
     for i, classe in enumerate(resultado["classes"]):
         print(f"  {classe}: {angulos[i]:.2f}°")
     
-    # Etapa 3: Relações entre pares
     print("\n=== ETAPA 3: RELAÇÕES ENTRE PARES 🔗 ===")
     relacoes = calcular_relacoes_pares(centroides_norm, resultado["classes"])
     print("Relações entre Pares:")
@@ -250,7 +257,6 @@ if __name__ == "__main__":
         print(f"    - Distância: {dados['distancia']:.4f}")
         print(f"    - Ângulo Relativo: {dados['angulo']:.2f}°")
     
-    # Etapa 4: Salvar gabarito
     print("\n=== ETAPA 4: PERSISTÊNCIA 💾 ===")
     salvar_gabarito(
         centroides_norm,
@@ -260,7 +266,6 @@ if __name__ == "__main__":
         GABARITO_NPZ
     )
     
-    # Verificação: Carregar gabarito
     print("\n=== VERIFICAÇÃO: Carregando Gabarito ===")
     gabarito = carregar_gabarito(GABARITO_NPZ)
     print("✅ Gabarito carregado com sucesso!")
