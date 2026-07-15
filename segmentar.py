@@ -16,7 +16,7 @@ def segmentar(caminho_imagem):
     imagem = cv2.imread(str(caminho_imagem))
 
     if imagem is None:
-        print(f"❌ Imagem não encontrada ou inválida: {caminho_imagem}")
+        print(f"Imagem não encontrada ou inválida: {caminho_imagem}")
         return
 
     resultados = model(str(caminho_imagem), conf=CONF_MINIMA)
@@ -31,7 +31,7 @@ def segmentar(caminho_imagem):
 
     cv2.imwrite(str(caminho_saida), imagem_segmentada)
 
-    print(f"✅ Imagem segmentada salva em: {caminho_saida}")
+    print(f"Imagem segmentada salva em: {caminho_saida}")
 
 
 def segmentar_pasta(caminho_pasta):
@@ -63,6 +63,6 @@ def segmentar_pasta(caminho_pasta):
 if __name__ == "__main__":
 
     # segmentar("imagens_avaliacao/sujeito7.jpg")
-    # segmentar("imagens_avaliacao/sujeito8.jpg")
+    segmentar("scripts_juncao/correta.jpg")
 
-    segmentar_pasta("scripts_juncao/imagens_avaliacao")
+    # segmentar_pasta("scripts_juncao/imagens_avaliacao")

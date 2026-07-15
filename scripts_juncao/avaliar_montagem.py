@@ -10,6 +10,7 @@ SEG_MODEL_PATH = "../best-seg.pt"
 IMAGENS_AVALIACAO_DIR = "imagens_avaliacao"
 EXCEL_OUTPUT = "notas_montagens.xlsx"
 CONF_MIN = 0.10
+DEBUG = False
 TOL_DIST_FRAC = 0.20      # 20% de tolerância na distância
 TOL_ANG_DEG = 50.0        # 25° de tolerância no ângulo relativo
 TOL_ROT_DEG = 30.0        # 30° de tolerância na rotação
@@ -41,7 +42,7 @@ def segmentar_imagem(img_path, gabarito):
         raise FileNotFoundError(f"Não foi possível carregar a imagem: {img_path}")
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    resultado = seg_model(img_rgb, conf=CONF_MIN)[0]
+    resultado = seg_model(img_rgb, conf=CONF_MIN, verbose=DEBUG)[0]
 
     if resultado.masks is None or len(resultado.boxes) == 0:
         return {
@@ -66,7 +67,7 @@ def segmentar_imagem(img_path, gabarito):
         confiancas
     )
 
-    if duplicadas:
+    if DEBUG and duplicadas:
         print("⚠️  Detecções duplicadas removidas:")
         for duplicada in duplicadas:
             print(f"   - {duplicada}")
@@ -310,18 +311,21 @@ def avaliar_montagem(img_path, gabarito_path=GABARITO_PATH):
     print(f"AVALIANDO MONTAGEM: {img_path}")
     print("="*60)
     
-    print("\n=== ETAPA 1: CARREGANDO GABARITO ===")
     gabarito = carregar_gabarito(gabarito_path)
-    print(f"✅ Gabarito carregado: {gabarito['classes']}")
+    if DEBUG:
+        print("\n=== ETAPA 1: CARREGANDO GABARITO ===")
+        print(f"✅ Gabarito carregado: {gabarito['classes']}")
     
-    print("\n=== ETAPA 2: SEGMENTANDO IMAGEM ===")
+    if DEBUG:
+        print("\n=== ETAPA 2: SEGMENTANDO IMAGEM ===")
     montagem = segmentar_imagem(img_path, gabarito)
-    print(f"✅ Imagem segmentada: {montagem['classes']}")
+    if DEBUG:
+        print(f"✅ Imagem segmentada: {montagem['classes']}")
 
     deteccao_ok, motivo = validar_pecas_detectadas(montagem)
     if not deteccao_ok:
         print("\n❌ Avaliação da montagem não foi possível.")
-        print(f"   Nem todas as peças foram detectadas corretamente: {motivo}")
+        print(f"Motivo: {motivo}")
         print("\n" + "="*60)
         print("NOTA FINAL: 0/3")
         print("="*60 + "\n")
@@ -336,31 +340,40 @@ def avaliar_montagem(img_path, gabarito_path=GABARITO_PATH):
             "erro": motivo
         }
     
-    print("\n=== ETAPA 3: AVALIANDO PARES ===")
     pares = ["esquerda_cima", "esquerda_baixo", "cima_baixo"]
     resultados = []
     nota = 0
     rotacao_global = calcular_rotacao_global(gabarito, montagem)
-    print(f"Rotação global estimada da foto: {rotacao_global:.1f}°")
+
+    if DEBUG:
+        print("\n=== ETAPA 3: AVALIANDO PARES ===")
+        print(f"Rotação global estimada da foto: {rotacao_global:.1f}°")
     
     for par in pares:
         resultado = avaliar_par(par, gabarito, montagem, rotacao_global)
         resultados.append(resultado)
         
-        status = "✅" if resultado["passou"] else "❌"
-        print(f"\n{status} {par.upper()}")
-        print(f"   Crit1 (Dist): {resultado['crit1']} (erro={resultado['crit1_valor']:.2%})")
-        print(f"   Crit2 (Ang):  {resultado['crit2']} (erro={resultado['crit2_valor']:.1f}°)")
-        print(f"   Crit3 (Rot):  {resultado['crit3']} (erro_a={resultado['crit3_valor_a']:.1f}°, erro_b={resultado['crit3_valor_b']:.1f}°)")
-        print(f"   Crit4 (Contato): {resultado['crit4']} (valor={resultado['crit4_valor']:.2f})")
+        if DEBUG:
+            status = "✅" if resultado["passou"] else "❌"
+            print(f"\n{status} {par.upper()}")
+            print(f"   Crit1 (Dist): {resultado['crit1']} (erro={resultado['crit1_valor']:.2%})")
+            print(f"   Crit2 (Ang):  {resultado['crit2']} (erro={resultado['crit2_valor']:.1f}°)")
+            print(f"   Crit3 (Rot):  {resultado['crit3']} (erro_a={resultado['crit3_valor_a']:.1f}°, erro_b={resultado['crit3_valor_b']:.1f}°)")
+            print(f"   Crit4 (Contato): {resultado['crit4']} (valor={resultado['crit4_valor']:.2f})")
         
         if resultado["passou"]:
             nota += 1
 
     juncoes_falhas = [resultado["par"] for resultado in resultados if not resultado["passou"]]
+    status_final = obter_status(nota, erro="")
     
     print("\n" + "="*60)
     print(f"NOTA FINAL: {nota}/3")
+    print(f"STATUS: {status_final}")
+    if juncoes_falhas:
+        print(f"JUNÇÕES QUE PRECISAM DE ATENÇÃO: {', '.join(juncoes_falhas)}")
+    else:
+        print("MONTAGEM SEM JUNÇÕES REPROVADAS")
     print("="*60 + "\n")
     
     return {
@@ -408,43 +421,68 @@ def formatar_observacoes(resultado):
     return " | ".join(observacoes)
 
 
+def obter_status(nota, erro):
+    if erro:
+        return "ERRO DETECÇÃO"
+    if nota == 3:
+        return "CORRETA"
+    if nota > 0:
+        return "PARCIAL"
+    return "ERRADA"
+
+
+def formatar_detalhes_tecnicos(resultado):
+    linhas = []
+    for detalhe in resultado["detalhes"]:
+        linhas.append(
+            f"{detalhe['par']}: "
+            f"Crit1 Dist={detalhe['crit1']} erro={detalhe['crit1_valor']:.2%}; "
+            f"Crit2 Ang={detalhe['crit2']} erro={detalhe['crit2_valor']:.1f}°; "
+            f"Crit3 Rot={detalhe['crit3']} erro_a={detalhe['crit3_valor_a']:.1f}° erro_b={detalhe['crit3_valor_b']:.1f}°; "
+            f"Crit4 Contato={detalhe['crit4']} valor={detalhe['crit4_valor']:.2f}"
+        )
+    return " | ".join(linhas)
+
+
 def salvar_resultados_excel(resultados, excel_output=EXCEL_OUTPUT):
     wb = Workbook()
     ws = wb.active
     ws.title = "Resultados"
 
-    ws.append([
+    cabecalho = [
         "Imagem",
         "Nota",
         "Status",
-        "Rotação global estimada",
         "Classes detectadas",
         "Junções que falharam",
         "Observações"
-    ])
+    ]
+
+    if DEBUG:
+        cabecalho.insert(3, "Rotação global estimada")
+        cabecalho.append("Detalhes técnicos")
+
+    ws.append(cabecalho)
 
     for resultado in resultados:
         nome_imagem = Path(resultado["arquivo"]).name
         nota = resultado["nota"]
+        status = obter_status(nota, resultado["erro"])
 
-        if resultado["erro"]:
-            status = "ERRO DETECÇÃO"
-        elif nota == 3:
-            status = "CORRETA"
-        elif nota > 0:
-            status = "PARCIAL"
-        else:
-            status = "ERRADA"
-
-        ws.append([
+        linha = [
             nome_imagem,
             nota,
             status,
-            resultado["rotacao_global"],
             ", ".join(resultado["classes_detectadas"]),
             ", ".join(resultado["juncoes_falhas"]),
             formatar_observacoes(resultado)
-        ])
+        ]
+
+        if DEBUG:
+            linha.insert(3, resultado["rotacao_global"])
+            linha.append(formatar_detalhes_tecnicos(resultado))
+
+        ws.append(linha)
 
     wb.save(excel_output)
     print(f"\nResultados salvos em: {excel_output}")
@@ -466,4 +504,8 @@ def avaliar_pasta(pasta=IMAGENS_AVALIACAO_DIR, gabarito_path=GABARITO_PATH, exce
 
 
 if __name__ == "__main__":
-    avaliar_pasta()
+    # avaliar_montagem("imagens_avaliacao_perspectiva/perspectiva1.jpg")
+    # avaliar_montagem("imagens_avaliacao_perspectiva/perspectiva2.jpg")
+    # avaliar_montagem("imagens_avaliacao_perspectiva/objeto1.jpeg")
+    # avaliar_montagem("imagens_avaliacao_perspectiva/objeto2.jpg")
+    avaliar_pasta("imagens_avaliacao/")
