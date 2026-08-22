@@ -1,0 +1,41 @@
+{
+  "nome": "maca",
+  "modelo": "best-seg.pt",
+  "imagem_gabarito": "figuras/maca/correta.jpg",
+  "gabarito": "figuras/maca/gabarito.npz",
+  "pasta_avaliacao": "figuras/maca/imagens_avaliacao",
+  "saida_excel": "figuras/maca/notas_montagens.xlsx",
+  "confianca_minima": 0.10,
+  "classes_esperadas": [
+    "Esquerda",
+    "Direita_cima",
+    "Direita_baixo"
+  ],
+  "pares": {
+    "esquerda_cima": [
+      "Esquerda",
+      "Direita_cima"
+    ],
+    "esquerda_baixo": [
+      "Esquerda",
+      "Direita_baixo"
+    ],
+    "cima_baixo": [
+      "Direita_cima",
+      "Direita_baixo"
+    ]
+  },
+  "rotacao_global": {
+    "origem": "Esquerda",
+    "destino_centroide": [
+      "Direita_cima",
+      "Direita_baixo"
+    ]
+  },
+  "tolerancias": {
+    "distancia_frac": 0.20,
+    "angulo_graus": 50.0,
+    "rotacao_graus": 30.0,
+    "contato_min": 0.25
+  }
+}

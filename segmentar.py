@@ -62,7 +62,7 @@ def segmentar_pasta(caminho_pasta):
 
 if __name__ == "__main__":
 
-    # segmentar("imagens_avaliacao/sujeito7.jpg")
-    segmentar("scripts_juncao/correta.jpg")
+    # segmentar("figuras/maca/imagens_avaliacao/sujeito7.jpg")
+    segmentar("figuras/maca/correta.jpg")
 
-    # segmentar_pasta("scripts_juncao/imagens_avaliacao")
+    # segmentar_pasta("figuras/maca/imagens_avaliacao")
