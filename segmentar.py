@@ -2,8 +2,8 @@ from ultralytics import YOLO
 import cv2
 from pathlib import Path
 
-CAMINHO_PESOS = "best-seg.pt"
-PASTA_SAIDA = "resultado_segmentacao"
+CAMINHO_PESOS = "best-caminhaoo.pt"
+PASTA_SAIDA = "resultado_segmentacao_caminhao"
 CONF_MINIMA = 0.25
 
 EXTENSOES_VALIDAS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
@@ -63,6 +63,6 @@ def segmentar_pasta(caminho_pasta):
 if __name__ == "__main__":
 
     # segmentar("figuras/maca/imagens_avaliacao/sujeito7.jpg")
-    segmentar("figuras/maca/correta.jpg")
+    segmentar("figuras/caminhao/correta-caminhao.jpg")
 
     # segmentar_pasta("figuras/maca/imagens_avaliacao")

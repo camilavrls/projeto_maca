@@ -1,6 +1,6 @@
 {
   "nome": "maca",
-  "modelo": "best-seg.pt",
+  "modelo": "best-maca.pt",
   "imagem_gabarito": "figuras/maca/correta.jpg",
   "gabarito": "figuras/maca/gabarito.npz",
   "pasta_avaliacao": "figuras/maca/imagens_avaliacao",

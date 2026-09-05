@@ -1,0 +1,28 @@
+{
+  "nome": "caminhao",
+  "modelo": "best-caminhao.pt",
+  "imagem_gabarito": "figuras/caminhao/correta-caminhao.jpg",
+  "gabarito": "figuras/caminhao/gabarito.npz",
+  "pasta_avaliacao": "figuras/caminhao/imagens_avaliacao",
+  "saida_excel": "figuras/caminhao/notas_montagens.xlsx",
+  "confianca_minima": 0.10,
+  "classes_esperadas": ["baixo", "cima", "direita", "esquerda"],
+  "pares": {
+    "baixo_cima": ["baixo", "cima"],
+    "baixo_direita": ["baixo", "direita"],
+    "baixo_esquerda": ["baixo", "esquerda"],
+    "cima_direita": ["cima", "direita"],
+    "cima_esquerda": ["cima", "esquerda"],
+    "direita_esquerda": ["direita", "esquerda"]
+  },
+  "rotacao_global": {
+    "origem": "baixo",
+    "destino_centroide": ["cima", "direita", "esquerda"]
+  },
+  "tolerancias": {
+    "distancia_frac": 0.20,
+    "angulo_graus": 50.0,
+    "rotacao_graus": 30.0,
+    "contato_min": 0.25
+  }
+}
