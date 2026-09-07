@@ -2,7 +2,7 @@ from ultralytics import YOLO
 import cv2
 from pathlib import Path
 
-CAMINHO_PESOS = "best-caminhaoo.pt"
+CAMINHO_PESOS = "best-caminhao.pt"
 PASTA_SAIDA = "resultado_segmentacao_caminhao"
 CONF_MINIMA = 0.25
 

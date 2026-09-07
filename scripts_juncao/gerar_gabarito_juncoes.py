@@ -49,7 +49,7 @@ def processar_imagem(img_path, modelo, conf_min) -> dict:
         raise FileNotFoundError(f"Não foi possível carregar a imagem: {img_path}")
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    resultado = modelo(img_rgb, conf=conf_min)[0]
+    resultado = modelo(img, conf=conf_min)[0]
 
     if resultado.masks is None or len(resultado.boxes) == 0:
         raise ValueError(f"Nenhuma peça foi detectada na imagem de gabarito: {img_path}")

@@ -5,15 +5,14 @@
   "gabarito": "figuras/caminhao/gabarito.npz",
   "pasta_avaliacao": "figuras/caminhao/imagens_avaliacao",
   "saida_excel": "figuras/caminhao/notas_montagens.xlsx",
-  "confianca_minima": 0.10,
+  "confianca_minima": 0.70,
   "classes_esperadas": ["baixo", "cima", "direita", "esquerda"],
   "pares": {
     "baixo_cima": ["baixo", "cima"],
     "baixo_direita": ["baixo", "direita"],
     "baixo_esquerda": ["baixo", "esquerda"],
     "cima_direita": ["cima", "direita"],
-    "cima_esquerda": ["cima", "esquerda"],
-    "direita_esquerda": ["direita", "esquerda"]
+    "cima_esquerda": ["cima", "esquerda"]
   },
   "rotacao_global": {
     "origem": "baixo",
@@ -23,6 +22,13 @@
     "distancia_frac": 0.20,
     "angulo_graus": 50.0,
     "rotacao_graus": 30.0,
-    "contato_min": 0.25
+    "contato_min": 0.25,
+    "contato_min_por_par": {
+      "baixo_cima": 0.25,
+      "baixo_direita": 0.25,
+      "baixo_esquerda": 0.25,
+      "cima_direita": 0.25,
+      "cima_esquerda": 0.01
+    }
   }
 }

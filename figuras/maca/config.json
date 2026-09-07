@@ -5,7 +5,7 @@
   "gabarito": "figuras/maca/gabarito.npz",
   "pasta_avaliacao": "figuras/maca/imagens_avaliacao",
   "saida_excel": "figuras/maca/notas_montagens.xlsx",
-  "confianca_minima": 0.10,
+  "confianca_minima": 0.70,
   "classes_esperadas": [
     "Esquerda",
     "Direita_cima",

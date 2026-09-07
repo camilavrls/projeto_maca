@@ -94,8 +94,7 @@ def segmentar_imagem(img_path, modelo, conf_min):
     if img is None:
         raise FileNotFoundError(f"Não foi possível carregar a imagem: {img_path}")
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    resultado = modelo(img_rgb, conf=conf_min, verbose=DEBUG)[0]
+    resultado = modelo(img, conf=conf_min, verbose=DEBUG)[0]
 
     if resultado.masks is None or len(resultado.boxes) == 0:
         return {
@@ -341,7 +340,9 @@ def avaliar_par(nome_par, gabarito_atual, montagem_atual, rotacao_global, config
 
     # Critério 4: contato real entre as máscaras da junção
     contato = calcular_contato(mask_a_novo, mask_b_novo)
-    crit4_ok = contato >= tolerancias["contato_min"]
+    contato_minimos = tolerancias.get("contato_min_por_par", {})
+    contato_minimo = contato_minimos.get(nome_par, tolerancias["contato_min"])
+    crit4_ok = contato >= contato_minimo
     
     return {
         "par": nome_par,
@@ -354,6 +355,7 @@ def avaliar_par(nome_par, gabarito_atual, montagem_atual, rotacao_global, config
         "crit3_valor_b": erro_rot_b,
         "crit4": crit4_ok,
         "crit4_valor": contato,
+        "crit4_minimo": contato_minimo,
         "passou": crit1_ok and crit2_ok and crit3_ok and crit4_ok
     }
 
@@ -416,7 +418,11 @@ def avaliar_montagem(img_path, config, modelo):
             print(f"   Crit1 (Dist): {resultado['crit1']} (erro={resultado['crit1_valor']:.2%})")
             print(f"   Crit2 (Ang):  {resultado['crit2']} (erro={resultado['crit2_valor']:.1f}°)")
             print(f"   Crit3 (Rot):  {resultado['crit3']} (erro_a={resultado['crit3_valor_a']:.1f}°, erro_b={resultado['crit3_valor_b']:.1f}°)")
-            print(f"   Crit4 (Contato): {resultado['crit4']} (valor={resultado['crit4_valor']:.2f})")
+            print(
+                f"   Crit4 (Contato): {resultado['crit4']} "
+                f"(valor={resultado['crit4_valor']:.2f}, "
+                f"mínimo={resultado['crit4_minimo']:.2f})"
+            )
         
         if resultado["passou"]:
             nota += 1
