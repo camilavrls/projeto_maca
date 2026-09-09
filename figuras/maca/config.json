@@ -5,7 +5,8 @@
   "gabarito": "figuras/maca/gabarito.npz",
   "pasta_avaliacao": "figuras/maca/imagens_avaliacao",
   "saida_excel": "figuras/maca/notas_montagens.xlsx",
-  "confianca_minima": 0.70,
+  "confianca_gabarito": 0.70,
+  "confianca_avaliacao": 0.10,
   "classes_esperadas": [
     "Esquerda",
     "Direita_cima",
@@ -36,6 +37,6 @@
     "distancia_frac": 0.20,
     "angulo_graus": 50.0,
     "rotacao_graus": 30.0,
-    "contato_min": 0.25
+    "contato_min": 0.24
   }
 }

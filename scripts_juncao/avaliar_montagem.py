@@ -84,7 +84,11 @@ def carregar_gabarito(npz_path):
         "classes": [str(classe) for classe in dados["classes"]],
         "centroides_norm": dados["centroides_norm"],
         "angulos_abs": dados["angulos_abs"],
-        "relacoes_pares": relacoes_pares
+        "relacoes_pares": relacoes_pares,
+        "contatos_norm": {
+            str(nome_par): dados["pares_contato_centroides"][i]
+            for i, nome_par in enumerate(pares_nomes)
+        } if "pares_contato_centroides" in dados.files else {},
     }
 
 
@@ -103,6 +107,7 @@ def segmentar_imagem(img_path, modelo, conf_min):
             "angulos_abs": np.array([]),
             "confiancas": np.array([]),
             "masks_img": np.array([]),
+            "limites_figura": np.array([]),
             "duplicadas": []
         }
     
@@ -172,6 +177,7 @@ def segmentar_imagem(img_path, modelo, conf_min):
         "angulos_abs": np.array(angulos),
         "confiancas": np.array(confiancas),
         "masks_img": np.array(masks_img),
+        "limites_figura": np.array([x_min, y_min, x_max, y_max]),
         "duplicadas": duplicadas
     }
 
@@ -257,6 +263,21 @@ def calcular_rotacao_global(gabarito_atual, montagem_atual, config):
     idx_montagem = {classe: i for i, classe in enumerate(montagem_atual["classes"])}
     rotacao_config = config["rotacao_global"]
 
+    if rotacao_config.get("metodo") == "mediana_angulos_pecas":
+        # As peças podem estar deslocadas em uma montagem incorreta. Nesse
+        # caso, estimar a rotação pela geometria da montagem inteira torna a
+        # referência instável. A mediana das orientações é robusta: uma peça
+        # fora de posição não domina a rotação global estimada.
+        rotacoes = []
+        for classe in gabarito_atual["classes"]:
+            ang_ref = gabarito_atual["angulos_abs"][idx_gabarito[classe]]
+            ang_novo = montagem_atual["angulos_abs"][idx_montagem[classe]]
+            diferenca = (ang_novo - ang_ref) % 180
+            if diferenca > 90:
+                diferenca -= 180
+            rotacoes.append(diferenca)
+        return float(np.median(rotacoes))
+
     def vetor_principal(dados, idx):
         origem = dados["centroides_norm"][idx[rotacao_config["origem"]]]
         destino_classes = rotacao_config["destino_centroide"]
@@ -276,7 +297,7 @@ def calcular_rotacao_global(gabarito_atual, montagem_atual, config):
     return rotacao
 
 
-def calcular_contato(mascara_a, mascara_b):
+def calcular_contato_e_centroide(mascara_a, mascara_b):
     kernel = np.ones((11, 11), np.uint8)
     mascara_a = mascara_a.astype(np.uint8)
     mascara_b = mascara_b.astype(np.uint8)
@@ -288,7 +309,34 @@ def calcular_contato(mascara_a, mascara_b):
     borda_a = np.logical_and(mascara_a, cv2.erode(mascara_a, kernel) == 0).sum()
     borda_b = np.logical_and(mascara_b, cv2.erode(mascara_b, kernel) == 0).sum()
 
-    return contato_total / max(1, min(borda_a, borda_b))
+    regiao_contato = np.logical_or(
+        np.logical_and(cv2.dilate(mascara_a, kernel) > 0, mascara_b),
+        np.logical_and(cv2.dilate(mascara_b, kernel) > 0, mascara_a),
+    )
+    y_pixels, x_pixels = np.where(regiao_contato)
+    centroide = None if not len(x_pixels) else np.array([np.mean(x_pixels), np.mean(y_pixels)])
+
+    return contato_total / max(1, min(borda_a, borda_b)), centroide
+
+
+def coordenadas_locais_do_contato(centroide_contato, centroide_a, centroide_b):
+    """Expressa o contato no referencial formado pelo próprio par de peças.
+
+    O primeiro valor indica a posição ao longo do vetor A -> B; o segundo,
+    a posição lateral. Assim, a medida não depende de onde o caminhão está na
+    foto, nem da rotação global da fotografia.
+    """
+    vetor_ab = centroide_b - centroide_a
+    norma_quadrada = float(np.dot(vetor_ab, vetor_ab))
+    if norma_quadrada == 0:
+        return None
+
+    vetor_contato = centroide_contato - centroide_a
+    return np.array([
+        np.dot(vetor_contato, vetor_ab) / norma_quadrada,
+        (vetor_ab[0] * vetor_contato[1] - vetor_ab[1] * vetor_contato[0])
+        / norma_quadrada,
+    ])
 
 
 def avaliar_par(nome_par, gabarito_atual, montagem_atual, rotacao_global, config):
@@ -339,10 +387,43 @@ def avaliar_par(nome_par, gabarito_atual, montagem_atual, rotacao_global, config
     )
 
     # Critério 4: contato real entre as máscaras da junção
-    contato = calcular_contato(mask_a_novo, mask_b_novo)
+    contato, centroide_contato = calcular_contato_e_centroide(mask_a_novo, mask_b_novo)
     contato_minimos = tolerancias.get("contato_min_por_par", {})
     contato_minimo = contato_minimos.get(nome_par, tolerancias["contato_min"])
     crit4_ok = contato >= contato_minimo
+
+    # Critério 5 (opcional): o contato ocorreu na região esperada da junção.
+    # É configurado por par, portanto figuras que não o habilitam (como a
+    # maçã) preservam exatamente os critérios anteriores.
+    crit5_ok = True
+    erro_contato_posicao = None
+    tolerancias_posicao = tolerancias.get("contato_posicao_local_por_par", {})
+    tolerancia_posicao = tolerancias_posicao.get(nome_par)
+    contato_ref = gabarito_atual.get("contatos_norm", {}).get(nome_par)
+    if tolerancia_posicao is not None and contato_ref is not None:
+        if centroide_contato is None:
+            crit5_ok = False
+            erro_contato_posicao = float("inf")
+        else:
+            x_min, y_min, x_max, y_max = montagem_atual["limites_figura"]
+            centroide_norm = np.array([
+                (centroide_contato[0] - x_min) / (x_max - x_min),
+                (centroide_contato[1] - y_min) / (y_max - y_min),
+            ])
+            contato_ref_local = coordenadas_locais_do_contato(
+                contato_ref, c_a_ref, c_b_ref
+            )
+            contato_novo_local = coordenadas_locais_do_contato(
+                centroide_norm, c_a_novo, c_b_novo
+            )
+            if contato_ref_local is None or contato_novo_local is None:
+                crit5_ok = False
+                erro_contato_posicao = float("inf")
+            else:
+                erro_contato_posicao = float(
+                    np.linalg.norm(contato_novo_local - contato_ref_local)
+                )
+                crit5_ok = erro_contato_posicao <= tolerancia_posicao
     
     return {
         "par": nome_par,
@@ -356,7 +437,10 @@ def avaliar_par(nome_par, gabarito_atual, montagem_atual, rotacao_global, config
         "crit4": crit4_ok,
         "crit4_valor": contato,
         "crit4_minimo": contato_minimo,
-        "passou": crit1_ok and crit2_ok and crit3_ok and crit4_ok
+        "crit5": crit5_ok,
+        "crit5_valor": erro_contato_posicao,
+        "crit5_tolerancia": tolerancia_posicao,
+        "passou": crit1_ok and crit2_ok and crit3_ok and crit4_ok and crit5_ok
     }
 
 
@@ -376,7 +460,7 @@ def avaliar_montagem(img_path, config, modelo):
     
     if DEBUG:
         print("\n=== ETAPA 2: SEGMENTANDO IMAGEM ===")
-    montagem = segmentar_imagem(img_path, modelo, config["confianca_minima"])
+    montagem = segmentar_imagem(img_path, modelo, config["confianca_avaliacao"])
     if DEBUG:
         print(f"✅ Imagem segmentada: {montagem['classes']}")
 
@@ -423,6 +507,12 @@ def avaliar_montagem(img_path, config, modelo):
                 f"(valor={resultado['crit4_valor']:.2f}, "
                 f"mínimo={resultado['crit4_minimo']:.2f})"
             )
+            if resultado["crit5_tolerancia"] is not None:
+                print(
+                    f"   Crit5 (Posição do contato): {resultado['crit5']} "
+                    f"(erro={resultado['crit5_valor']:.2f}, "
+                    f"máximo={resultado['crit5_tolerancia']:.2f})"
+                )
         
         if resultado["passou"]:
             nota += 1

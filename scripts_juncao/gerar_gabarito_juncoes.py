@@ -185,7 +185,48 @@ def calcular_relacoes_pares(centroides_norm, classes, pares) -> dict:
     return relacoes
 
 
-def salvar_gabarito(centroides_norm, angulos_abs, relacoes_pares, classes, config) -> None:
+def calcular_contatos_normalizados(masks, boxes, classes, imagem_shape, pares) -> dict:
+    """Calcula o centro da região de contato de cada junção do gabarito."""
+    x_min, y_min = np.min(boxes[:, 0]), np.min(boxes[:, 1])
+    x_max, y_max = np.max(boxes[:, 2]), np.max(boxes[:, 3])
+    largura_total, altura_total = x_max - x_min, y_max - y_min
+    altura_img, largura_img = imagem_shape[:2]
+
+    mascaras_img = [
+        cv2.resize(mascara.astype(np.uint8), (largura_img, altura_img), interpolation=cv2.INTER_NEAREST)
+        for mascara in masks
+    ]
+    indice_classes = {classe: i for i, classe in enumerate(classes)}
+    kernel = np.ones((11, 11), np.uint8)
+    contatos = {}
+
+    for nome_par, (classe_a, classe_b) in pares.items():
+        mascara_a = mascaras_img[indice_classes[classe_a]]
+        mascara_b = mascaras_img[indice_classes[classe_b]]
+        regiao_a = np.logical_and(cv2.dilate(mascara_a, kernel) > 0, mascara_b)
+        regiao_b = np.logical_and(cv2.dilate(mascara_b, kernel) > 0, mascara_a)
+        regiao = np.logical_or(regiao_a, regiao_b)
+        y_pixels, x_pixels = np.where(regiao)
+
+        if not len(x_pixels):
+            raise ValueError(f"Não foi possível localizar o contato da junção '{nome_par}'.")
+
+        contatos[nome_par] = np.array([
+            (np.mean(x_pixels) - x_min) / largura_total,
+            (np.mean(y_pixels) - y_min) / altura_total,
+        ])
+
+    return contatos
+
+
+def salvar_gabarito(
+    centroides_norm,
+    angulos_abs,
+    relacoes_pares,
+    classes,
+    config,
+    contatos_norm=None,
+) -> None:
     npz_path = config["gabarito"]
     npz_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -200,17 +241,25 @@ def salvar_gabarito(centroides_norm, angulos_abs, relacoes_pares, classes, confi
         pares_distancias.append(dados["distancia"])
         pares_angulos.append(dados["angulo"])
 
+    dados = {
+        "schema_version": np.array(3 if contatos_norm is not None else 2),
+        "figura": np.array(config["nome"]),
+        "classes": np.array(classes),
+        "centroides_norm": centroides_norm,
+        "angulos_abs": angulos_abs,
+        "pares_nomes": np.array(pares_nomes),
+        "pares_classes": np.array(pares_classes),
+        "pares_distancias": np.array(pares_distancias),
+        "pares_angulos": np.array(pares_angulos),
+    }
+    if contatos_norm is not None:
+        dados["pares_contato_centroides"] = np.array([
+            contatos_norm[nome_par] for nome_par in pares_nomes
+        ])
+
     np.savez_compressed(
         npz_path,
-        schema_version=np.array(2),
-        figura=np.array(config["nome"]),
-        classes=np.array(classes),
-        centroides_norm=centroides_norm,
-        angulos_abs=angulos_abs,
-        pares_nomes=np.array(pares_nomes),
-        pares_classes=np.array(pares_classes),
-        pares_distancias=np.array(pares_distancias),
-        pares_angulos=np.array(pares_angulos)
+        **dados,
     )
 
     print(f"Gabarito salvo em: {npz_path}")
@@ -232,13 +281,19 @@ def carregar_gabarito(npz_path) -> dict:
             "angulo": float(pares_angulos[i])
         }
 
+    contatos_norm = {}
+    if "pares_contato_centroides" in dados.files:
+        for i, nome_par in enumerate(pares_nomes):
+            contatos_norm[str(nome_par)] = dados["pares_contato_centroides"][i]
+
     return {
         "schema_version": int(dados["schema_version"]),
         "figura": str(dados["figura"]),
         "classes": [str(classe) for classe in dados["classes"]],
         "centroides_norm": dados["centroides_norm"],
         "angulos_abs": dados["angulos_abs"],
-        "relacoes_pares": relacoes_pares
+        "relacoes_pares": relacoes_pares,
+        "contatos_norm": contatos_norm,
     }
 
 
@@ -254,7 +309,7 @@ def gerar_gabarito(config_path):
     resultado = processar_imagem(
         config["imagem_gabarito"],
         modelo,
-        config["confianca_minima"]
+        config["confianca_gabarito"]
     )
     validar_pecas_detectadas(resultado["classes"], config["classes_esperadas"])
     print(f"Classes detectadas: {resultado['classes']}")
@@ -285,6 +340,16 @@ def gerar_gabarito(config_path):
         resultado["classes"],
         config["pares"]
     )
+
+    contatos_norm = None
+    if "contato_posicao_local_por_par" in config["tolerancias"]:
+        contatos_norm = calcular_contatos_normalizados(
+            resultado["masks"],
+            resultado["boxes"],
+            resultado["classes"],
+            resultado["imagem"].shape,
+            config["pares"],
+        )
     print("Relações entre Pares:")
     for par, dados in relacoes.items():
         print(f"  {par}:")
@@ -298,7 +363,8 @@ def gerar_gabarito(config_path):
         angulos,
         relacoes,
         resultado["classes"],
-        config
+        config,
+        contatos_norm,
     )
 
     print("\n=== VERIFICAÇÃO: Carregando Gabarito ===")
