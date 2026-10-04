@@ -1,0 +1,48 @@
+{
+  "nome": "casa",
+  "modelo": "best-casa.pt",
+  "imagem_gabarito": "figuras/casa/casa-correta.png",
+  "gabarito": "figuras/casa/gabarito.npz",
+  "pasta_avaliacao": "figuras/casa/imagens_avaliacao",
+  "saida_excel": "figuras/casa/notas_montagens.xlsx",
+  "confianca_gabarito": 0.70,
+  "confianca_avaliacao": 0.10,
+  "classes_esperadas": [
+    "chamine",
+    "degrau",
+    "entrada",
+    "jardim",
+    "porta",
+    "telhado",
+    "tijolos"
+  ],
+  "pares": {
+    "chamine_telhado": ["chamine", "telhado"],
+    "chamine_porta": ["chamine", "porta"],
+    "porta_jardim": ["porta", "jardim"],
+    "telhado_porta": ["telhado", "porta"],
+    "telhado_tijolos": ["telhado", "tijolos"],
+    "porta_tijolos": ["porta", "tijolos"],
+    "tijolos_entrada": ["tijolos", "entrada"],
+    "tijolos_degrau": ["tijolos", "degrau"],
+    "porta_entrada": ["porta", "entrada"],
+    "entrada_degrau": ["entrada", "degrau"]
+  },
+  "rotacao_global": {
+    "origem": "porta",
+    "destino_centroide": ["telhado", "entrada", "jardim"]
+  },
+  "tolerancias": {
+    "distancia_frac": 0.20,
+    "angulo_graus": 50.0,
+    "rotacao_graus": 30.0,
+    "contato_posicao_local_por_par": {
+      "chamine_porta": 0.12,
+      "telhado_tijolos": 0.25
+    },
+    "contato_min": 0.25,
+    "contato_min_por_par": {
+      "telhado_porta": 0.22
+    }
+  }
+}
